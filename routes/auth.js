@@ -33,6 +33,7 @@ router.get('/github', (_req, res) => {
     client_id: process.env.GITHUB_CLIENT_ID,
     scope: 'repo admin:repo_hook read:user',
     state,
+    login: '',  // Force GitHub to show account picker instead of auto-login
   });
   const url = `https://github.com/login/oauth/authorize?${params}`;
   console.log(`[Auth] Redirecting to GitHub OAuth (client_id=${process.env.GITHUB_CLIENT_ID})`);
