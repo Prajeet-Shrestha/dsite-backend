@@ -116,13 +116,28 @@ if (SITE_DOMAIN && PORTAL_URL) {
 }
 
 // ── CORS (Gap #16, #17) ──
+const allowedOrigin = process.env.CLIENT_URL || 'http://localhost:5173';
+console.log(`✓ CORS origin: ${allowedOrigin}`);
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  origin: allowedOrigin,
   credentials: true,
 }));
 
 // ── Body parsing ──
 app.use(express.json());
+
+// ── Request Logger ──
+app.use((req, res, next) => {
+  const start = Date.now();
+  const { method, path: urlPath } = req;
+  res.on('finish', () => {
+    const ms = Date.now() - start;
+    const status = res.statusCode;
+    const level = status >= 500 ? '❌' : status >= 400 ? '⚠' : '✓';
+    console.log(`${level} ${method} ${urlPath} → ${status} (${ms}ms)`);
+  });
+  next();
+});
 
 // ── Session (Gap #21: resave + saveUninitialized, Gap #25: client) ──
 app.use(session({
@@ -192,6 +207,9 @@ async function start() {
 
   app.listen(PORT, () => {
     console.log(`✓ dSite backend running on http://localhost:${PORT}`);
+    console.log(`  NODE_ENV    = ${process.env.NODE_ENV || 'development'}`);
+    console.log(`  CLIENT_URL  = ${process.env.CLIENT_URL || '(not set)'}`);
+    console.log(`  SITE_DOMAIN = ${process.env.SITE_DOMAIN || '(not set)'}`);
   });
 }
 
