@@ -18,6 +18,12 @@ RUN curl -fsSL "https://storage.googleapis.com/mysten-walrus-binaries/site-build
     -o /usr/local/bin/site-builder \
     && chmod +x /usr/local/bin/site-builder
 
+# ── Install Walrus CLI ──
+# Required by site-builder to upload blobs to the Walrus network
+RUN curl -fsSL "https://storage.googleapis.com/mysten-walrus-binaries/walrus-mainnet-latest-ubuntu-x86_64" \
+    -o /usr/local/bin/walrus \
+    && chmod +x /usr/local/bin/walrus
+
 # ── Walrus + Sui configs ──
 # sites-config.yaml is needed by the deployer
 COPY config/sites-config.yaml /root/.config/walrus/sites-config.yaml
