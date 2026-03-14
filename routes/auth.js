@@ -87,6 +87,8 @@ router.get('/github/callback', async (req, res, next) => {
         return next(err);
       }
       const redirectUrl = `${process.env.CLIENT_URL}/dashboard`;
+      const setCookie = res.getHeader('set-cookie');
+      console.log(`[Auth] Set-Cookie header: ${JSON.stringify(setCookie)}`);
       console.log(`[Auth] Redirecting to: ${redirectUrl}`);
       res.redirect(redirectUrl);
     });

@@ -9,6 +9,7 @@ const { decrypt } = require('../crypto');
  */
 function requireAuth(req, res, next) {
   const userId = req.session?.userId;
+  console.log(`[Auth:guard] sessionID=${req.sessionID}, userId=${userId || 'NONE'}, cookie=${req.headers.cookie ? 'present' : 'MISSING'}, origin=${req.headers.origin || 'none'}`);
   if (!userId) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
