@@ -221,6 +221,7 @@ async function runPipeline(project, deploymentId, userToken, abortController) {
     commitSha = row?.commit_sha;
   } catch (_) {}
 
+  let buildStartTime = Date.now();
   try {
     // ── ACQUIRE SEMAPHORE ──
     await semaphoreAcquire(signal);
@@ -230,7 +231,7 @@ async function runPipeline(project, deploymentId, userToken, abortController) {
       .run('building', deploymentId);
     emitter.emit('status', 'building');
     emitLog('── Build started ──');
-    const buildStartTime = Date.now();
+    buildStartTime = Date.now();
     if (commitSha) commitStatus(commitSha, 'pending', 'Building...');
 
     // Build timeout
