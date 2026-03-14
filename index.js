@@ -1,0 +1,194 @@
+// ── dSite Backend ──
+require('dotenv').config();
+
+const express = require('express');
+const session = require('express-session');
+const cors = require('cors');
+const db = require('./db');
+
+// Session store — Gap #2: factory pattern, Gap #25: client = db instance
+const SqliteStore = require('better-sqlite3-session-store')(session);
+
+const authRoutes = require('./routes/auth');
+const reposRoutes = require('./routes/repos');
+const projectsRoutes = require('./routes/projects');
+const deploymentsRoutes = require('./routes/deployments');
+const queue = require('./queue');
+const deployer = require('./services/deployer');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const isProd = process.env.NODE_ENV === 'production';
+
+// Production: trust first proxy (L1)
+if (isProd) app.set('trust proxy', 1);
+
+// ── Startup Validation (Z5) ──
+if (!process.env.ADMIN_MNEMONICS) {
+  console.error('❌ ADMIN_MNEMONICS not set. Cannot deploy to Walrus.');
+  process.exit(1);
+}
+
+// ── Site Proxy: *.SITE_DOMAIN → Walrus Portal ──
+// MUST be before CORS, session, and body parsing so user site requests
+// are proxied raw without Express middleware interference.
+const SITE_DOMAIN = process.env.SITE_DOMAIN;
+const PORTAL_URL = process.env.PORTAL_URL;
+
+if (SITE_DOMAIN && PORTAL_URL) {
+  const { createProxyMiddleware } = require('http-proxy-middleware');
+  const siteCache = require('./services/siteCache');
+  const { RESERVED } = require('./services/slugify');
+
+  const siteProxy = createProxyMiddleware({
+    target: PORTAL_URL,
+    changeOrigin: true,
+    on: {
+      proxyReq: (proxyReq, req) => {
+        if (req._portalHost) proxyReq.setHeader('Host', req._portalHost);
+      },
+      error: (_err, _req, res) => {
+        if (!res.headersSent) {
+          res.writeHead(502, { 'Content-Type': 'text/html' });
+          res.end('<h1>Site temporarily unavailable</h1><p>Please try again later.</p>');
+        }
+      },
+    },
+  });
+
+  app.use((req, res, next) => {
+    const host = req.hostname;
+
+    // Only handle *.SITE_DOMAIN subdomains, not root domain or other hosts
+    if (host === SITE_DOMAIN || !host.endsWith(`.${SITE_DOMAIN}`)) return next();
+    // Let API paths through to Express routes
+    if (req.path.startsWith('/api')) return next();
+
+    const subdomain = host.slice(0, -(SITE_DOMAIN.length + 1));
+
+    // Reject multi-level subdomains and invalid chars
+    if (subdomain.includes('.') || !/^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/.test(subdomain)) {
+      return res.status(400).send('Invalid subdomain');
+    }
+
+    // Block reserved subdomains
+    if (RESERVED.has(subdomain)) {
+      return res.status(404).send('Reserved subdomain');
+    }
+
+    // Check cache
+    const cached = siteCache.get(subdomain);
+    if (cached === 'NONE') return res.status(404).send('Site not found');
+    if (cached) {
+      req._portalHost = `${cached}.localhost`;
+      return siteProxy(req, res, next);
+    }
+
+    // DB lookup
+    const project = db.prepare('SELECT walrus_object_id FROM projects WHERE slug = ?').get(subdomain);
+    if (!project || !project.walrus_object_id) {
+      siteCache.set(subdomain, 'NONE');
+      return res.status(404).send(project ? 'Site not deployed yet' : 'Site not found');
+    }
+
+    const b36 = BigInt(project.walrus_object_id).toString(36);
+    siteCache.set(subdomain, b36);
+    req._portalHost = `${b36}.localhost`;
+    siteProxy(req, res, next);
+  });
+
+  console.log(`✓ Site proxy enabled: *.${SITE_DOMAIN} → ${PORTAL_URL}`);
+}
+
+// ── CORS (Gap #16, #17) ──
+app.use(cors({
+  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  credentials: true,
+}));
+
+// ── Body parsing ──
+app.use(express.json());
+
+// ── Session (Gap #21: resave + saveUninitialized, Gap #25: client) ──
+app.use(session({
+  store: new SqliteStore({
+    client: db,
+    expired: {
+      clear: true,
+      intervalMs: 15 * 60 * 1000, // Clean expired sessions every 15 min
+    },
+  }),
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    sameSite: 'lax',
+    httpOnly: true,
+    secure: isProd, // HTTPS in production (L2)
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  },
+}));
+
+// ── Routes ──
+app.use('/api/auth', authRoutes);
+app.use('/api', reposRoutes);
+app.use('/api/projects', projectsRoutes);
+app.use('/api', deploymentsRoutes);
+
+// ── Health check ──
+app.get('/api/health', (_req, res) => {
+  res.json({ status: 'ok' });
+});
+
+// ── Global error handler (Gap #20) ──
+app.use((err, _req, res, _next) => {
+  console.error('Unhandled error:', err);
+  res.status(err.status || 500).json({
+    error: err.message || 'Internal server error',
+  });
+});
+
+// ── Startup ──
+async function start() {
+  // Mark interrupted builds from previous crash/restart (H1)
+  queue.markInterruptedBuilds();
+
+  // Migrate: auto-generate slugs for existing projects
+  const { generateSlug } = require('./services/slugify');
+  const unslugged = db.prepare('SELECT id, name FROM projects WHERE slug IS NULL').all();
+  for (const p of unslugged) {
+    let slug = generateSlug(p.name) || p.id.slice(0, 8);
+    let final = slug, i = 2;
+    while (db.prepare('SELECT 1 FROM projects WHERE slug = ?').get(final)) {
+      final = `${slug}-${i++}`;
+    }
+    db.prepare('UPDATE projects SET slug = ? WHERE id = ?').run(final, p.id);
+    console.log(`  Migrated slug: ${p.name} → ${final}`);
+  }
+
+  // Set up the deployer wallet from ADMIN_MNEMONICS (Z1)
+  try {
+    await deployer.setupWallet();
+  } catch (err) {
+    console.error('⚠ Wallet setup failed:', err.message);
+    console.error('Deployments will fail until wallet is configured.');
+  }
+
+  app.listen(PORT, () => {
+    console.log(`✓ dSite backend running on http://localhost:${PORT}`);
+  });
+}
+
+// ── Graceful Shutdown (W2) ──
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received — shutting down...');
+  // Grace period to close SSE connections
+  setTimeout(() => process.exit(0), 2000);
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received — shutting down...');
+  setTimeout(() => process.exit(0), 2000);
+});
+
+start();
