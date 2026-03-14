@@ -8,10 +8,18 @@ const github = require('../services/github');
 
 const router = Router();
 
+// ── One-time auth codes (in-memory, expires in 60s) ──
+const pendingCodes = new Map(); // code → { userId, expiresAt }
+
+function cleanExpiredCodes() {
+  const now = Date.now();
+  for (const [code, data] of pendingCodes) {
+    if (data.expiresAt < now) pendingCodes.delete(code);
+  }
+}
+
 /**
  * GET /api/auth/github — Initiate OAuth
- * Gap #3: session.save() before redirect
- * Gap #6: Omit redirect_uri — rely on app settings
  */
 router.get('/github', (req, res) => {
   console.log('[Auth] OAuth initiation - generating state...');
@@ -35,10 +43,9 @@ router.get('/github', (req, res) => {
 
 /**
  * GET /api/auth/github/callback — Handle OAuth callback
- * Gap #20: try/catch for Express 4 async safety
- * Gap #22: ON CONFLICT upsert for re-login
- * Gap #23: GitHub sends ?error=access_denied — normalize to 'denied'
- * Gap #24: crypto.randomUUID() instead of uuid package
+ * After successful login, generates a one-time auth code and
+ * redirects to the frontend's /auth/callback?code=xxx route.
+ * The frontend then exchanges the code for a session via POST /api/auth/exchange.
  */
 router.get('/github/callback', async (req, res, next) => {
   try {
@@ -76,22 +83,19 @@ router.get('/github/callback', async (req, res, next) => {
         access_token = excluded.access_token
     `).run(userId, ghUser.id, ghUser.login, ghUser.avatar_url, encryptedToken);
 
-    // Get actual user id (upsert may have kept the original row's id)
+    // Get actual user id
     const user = db.prepare('SELECT id FROM users WHERE github_id = ?').get(ghUser.id);
-    req.session.userId = user.id;
-    console.log(`[Auth] User logged in: ${ghUser.login} (userId=${user.id})`);
+    console.log(`[Auth] User authenticated: ${ghUser.login} (userId=${user.id})`);
 
-    req.session.save((err) => {
-      if (err) {
-        console.error('[Auth] Session save error after login:', err);
-        return next(err);
-      }
-      const redirectUrl = `${process.env.CLIENT_URL}/dashboard`;
-      const setCookie = res.getHeader('set-cookie');
-      console.log(`[Auth] Set-Cookie header: ${JSON.stringify(setCookie)}`);
-      console.log(`[Auth] Redirecting to: ${redirectUrl}`);
-      res.redirect(redirectUrl);
-    });
+    // Generate one-time auth code (instead of setting session directly)
+    cleanExpiredCodes();
+    const authCode = crypto.randomBytes(32).toString('hex');
+    pendingCodes.set(authCode, { userId: user.id, expiresAt: Date.now() + 60_000 });
+    console.log(`[Auth] Generated auth code, redirecting to frontend callback...`);
+
+    const redirectUrl = `${process.env.CLIENT_URL}/auth/callback?code=${authCode}`;
+    console.log(`[Auth] Redirecting to: ${redirectUrl}`);
+    res.redirect(redirectUrl);
   } catch (err) {
     console.error('[Auth] Callback error:', err);
     next(err);
@@ -99,8 +103,54 @@ router.get('/github/callback', async (req, res, next) => {
 });
 
 /**
+ * POST /api/auth/exchange — Exchange one-time code for session
+ * Called by the frontend through the Vercel proxy (same domain = cookies work).
+ */
+router.post('/exchange', (req, res) => {
+  const { code } = req.body;
+  console.log(`[Auth] Exchange request - code=${code ? 'present' : 'missing'}`);
+
+  if (!code) {
+    return res.status(400).json({ error: 'Missing code' });
+  }
+
+  cleanExpiredCodes();
+  const pending = pendingCodes.get(code);
+  if (!pending) {
+    console.error('[Auth] Exchange failed - invalid or expired code');
+    return res.status(401).json({ error: 'Invalid or expired code' });
+  }
+
+  // Consume the code (one-time use)
+  pendingCodes.delete(code);
+
+  // Look up the user
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(pending.userId);
+  if (!user) {
+    console.error(`[Auth] Exchange failed - user not found: ${pending.userId}`);
+    return res.status(401).json({ error: 'User not found' });
+  }
+
+  // Set session (cookie will be set by express-session on this same-domain request)
+  req.session.userId = user.id;
+  req.session.save((err) => {
+    if (err) {
+      console.error('[Auth] Session save error during exchange:', err);
+      return res.status(500).json({ error: 'Session error' });
+    }
+    console.log(`[Auth] Exchange successful — session set for ${user.username} (${user.id})`);
+    res.json({
+      id: user.id,
+      username: user.username,
+      avatar_url: user.avatar_url,
+      github_id: user.github_id,
+      plan: user.plan || 'free',
+    });
+  });
+});
+
+/**
  * GET /api/auth/me — Current user
- * Gap #7: Response must match frontend User type exactly.
  */
 router.get('/me', requireAuth, (req, res) => {
   console.log(`[Auth] /me - user=${req.user.username}`);
