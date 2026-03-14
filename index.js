@@ -152,7 +152,7 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    sameSite: isProd ? 'none' : 'lax', // 'none' required for cross-origin cookies (Vercel ↔ Coolify)
+    sameSite: 'lax',
     httpOnly: true,
     secure: isProd, // HTTPS required when sameSite='none'
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
