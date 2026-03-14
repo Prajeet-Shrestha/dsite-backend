@@ -7,7 +7,10 @@ RUN apt-get update && apt-get install -y \
 
 # ── Install Sui CLI ──
 RUN curl -fsSL https://github.com/MystenLabs/sui/releases/download/mainnet-v1.67.3/sui-mainnet-v1.67.3-ubuntu-x86_64.tgz \
-    | tar -xz -C /usr/local/bin/ sui
+    -o /tmp/sui.tgz \
+    && tar -xzf /tmp/sui.tgz -C /usr/local/bin/ ./sui \
+    && rm /tmp/sui.tgz \
+    && chmod +x /usr/local/bin/sui
 
 # ── Install site-builder ──
 # Downloaded from Walrus GCS bucket (official distribution)
