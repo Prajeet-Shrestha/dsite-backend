@@ -5,6 +5,9 @@ RUN apt-get update && apt-get install -y \
     python3 make g++ curl git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# Enable corepack for pnpm/yarn support (user repos may use any package manager)
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
 # ── Install Sui CLI ──
 RUN curl -fsSL https://github.com/MystenLabs/sui/releases/download/mainnet-v1.67.3/sui-mainnet-v1.67.3-ubuntu-x86_64.tgz \
     -o /tmp/sui.tgz \
