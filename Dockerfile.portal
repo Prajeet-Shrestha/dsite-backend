@@ -1,0 +1,4 @@
+FROM mysten/walrus-sites-server-portal:mainnet-v2.6.0
+
+# Bake portal config into the image (avoids bind-mount issues on Coolify)
+COPY portal-config.yaml /etc/walrus-sites/portal-config.yaml

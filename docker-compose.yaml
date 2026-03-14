@@ -25,11 +25,11 @@ services:
     restart: unless-stopped
 
   portal:
-    image: mysten/walrus-sites-server-portal:mainnet-v2.6.0
+    build:
+      context: .
+      dockerfile: Dockerfile.portal
     environment:
       - PORTAL_CONFIG=/etc/walrus-sites/portal-config.yaml
-    volumes:
-      - ./portal-config.yaml:/etc/walrus-sites/portal-config.yaml:ro
     restart: unless-stopped
 
 volumes:
