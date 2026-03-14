@@ -21,8 +21,7 @@ services:
       - backend-data:/app/data
       - backend-builds:/app/builds
     depends_on:
-      portal:
-        condition: service_healthy
+      - portal
     restart: unless-stopped
 
   portal:
@@ -31,12 +30,6 @@ services:
       - PORTAL_CONFIG=/etc/walrus-sites/portal-config.yaml
     volumes:
       - ./portal-config.yaml:/etc/walrus-sites/portal-config.yaml:ro
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
     restart: unless-stopped
 
 volumes:
