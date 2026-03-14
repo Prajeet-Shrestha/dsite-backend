@@ -1,0 +1,43 @@
+services:
+  backend:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORTAL_URL=http://portal:3000
+      - SITE_DOMAIN=emeraldcity.xyz
+      - CLIENT_URL=https://emeraldcity.xyz
+      - WALRUS_CONTEXT=mainnet
+      - WALRUS_EPOCHS=1
+      - PORT=3000
+      # These should be set via Coolify env vars (secrets):
+      # - SESSION_SECRET=
+      # - ENCRYPTION_KEY=
+      # - ADMIN_MNEMONICS=
+      # - GITHUB_CLIENT_ID=
+      # - GITHUB_CLIENT_SECRET=
+    volumes:
+      - backend-data:/app/data
+      - backend-builds:/app/builds
+    depends_on:
+      portal:
+        condition: service_healthy
+    restart: unless-stopped
+
+  portal:
+    image: mysten/walrus-sites-server-portal:mainnet-v2.6.0
+    environment:
+      - PORTAL_CONFIG=/etc/walrus-sites/portal-config.yaml
+    volumes:
+      - ./portal-config.yaml:/etc/walrus-sites/portal-config.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  backend-data:
+  backend-builds:
