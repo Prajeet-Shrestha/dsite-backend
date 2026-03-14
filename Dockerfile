@@ -25,8 +25,10 @@ RUN curl -fsSL "https://storage.googleapis.com/mysten-walrus-binaries/walrus-mai
     && chmod +x /usr/local/bin/walrus
 
 # ── Walrus + Sui configs ──
-# sites-config.yaml is needed by the deployer
+# sites-config.yaml is needed by the site-builder deployer
 COPY config/sites-config.yaml /root/.config/walrus/sites-config.yaml
+# client_config.yaml is needed by the walrus CLI binary (blob uploads)
+COPY config/walrus-client-config.yaml /root/.config/walrus/client_config.yaml
 
 # Sui wallet config will be generated at runtime from ADMIN_MNEMONICS
 # via deployer.setupWallet()
