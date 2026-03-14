@@ -7,7 +7,7 @@ services:
       - NODE_ENV=production
       - PORTAL_URL=http://portal:3000
       - SITE_DOMAIN=207.180.212.180.nip.io
-      - CLIENT_URL=http://207.180.212.180.nip.io
+      - CLIENT_URL=https://dsite.emeraldcity.xyz
       - WALRUS_CONTEXT=mainnet
       - WALRUS_EPOCHS=1
       - PORT=3000
