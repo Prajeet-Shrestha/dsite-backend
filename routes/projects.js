@@ -1,4 +1,3 @@
-// ── Projects Routes ──
 const { Router } = require('express');
 const crypto = require('crypto');
 const db = require('../db');
@@ -7,11 +6,13 @@ const { requireAuth } = require('../middleware/auth');
 const queue = require('../queue');
 const { generateSlug, validateSlug } = require('../services/slugify');
 const siteCache = require('../services/siteCache');
+const usage = require('../services/usage');
 
 const router = Router();
 
 /**
  * POST /api/projects — Import a repository as a project
+ * Wrapped in db.transaction() for atomic project limit check (S1, G15, G19)
  */
 router.post('/', requireAuth, async (req, res, next) => {
   try {
@@ -37,7 +38,16 @@ router.post('/', requireAuth, async (req, res, next) => {
       return res.status(400).json({ error: slugErr });
     }
 
-    try {
+    // Atomic: check limit + insert (S1, G15)
+    const limits = usage.getLimits(req.user.plan);
+    const createInTransaction = db.transaction(() => {
+      const count = usage.getProjectCount(req.user.id);
+      if (count >= limits.projects) {
+        const err = new Error('project_limit');
+        err.limitData = { current: count, max: limits.projects, type: 'projects' };
+        throw err;
+      }
+
       db.prepare(`
         INSERT INTO projects (id, user_id, name, slug, repo_full_name, repo_url, branch, root_directory, build_command, output_directory, env_vars)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -54,8 +64,19 @@ router.post('/', requireAuth, async (req, res, next) => {
         outputDirectory || '',
         encryptedEnvVars,
       );
+    });
+
+    try {
+      createInTransaction();
     } catch (err) {
-      // UNIQUE constraint violation → 409
+      // Project limit exceeded
+      if (err.message === 'project_limit') {
+        return res.status(403).json({
+          error: `Project limit reached (${err.limitData.current}/${err.limitData.max}). Upgrade your plan.`,
+          limit: err.limitData,
+        });
+      }
+      // UNIQUE constraint violation → 409 (G19: preserved inside transaction)
       if (err.message?.includes('UNIQUE constraint failed')) {
         if (err.message.includes('slug')) {
           return res.status(409).json({ error: `"${slug}" is already taken as a site name` });

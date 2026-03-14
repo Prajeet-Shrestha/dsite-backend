@@ -5,6 +5,7 @@ const db = require('../db');
 const { requireAuth } = require('../middleware/auth');
 const queue = require('../queue');
 const github = require('../services/github');
+const usage = require('../services/usage');
 
 const router = Router();
 
@@ -28,6 +29,15 @@ router.post('/projects/:projectId/deploy', requireAuth, async (req, res, next) =
       return res.status(429).json({
         error: 'A deployment is already in progress',
         deploymentId: existing.id,
+      });
+    }
+
+    // Usage limit: soft check (E5)
+    const limitCheck = usage.checkLimit(req.user.id, 'deployments');
+    if (!limitCheck.allowed) {
+      return res.status(403).json({
+        error: `Deploy limit reached (${limitCheck.current}/${limitCheck.limit}). Resets next month.`,
+        limit: { current: limitCheck.current, max: limitCheck.limit, type: 'deployments' },
       });
     }
 

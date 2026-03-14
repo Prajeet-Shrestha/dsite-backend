@@ -75,6 +75,68 @@ try { db.exec('ALTER TABLE deployments ADD COLUMN wal_cost REAL DEFAULT 0'); } c
 try { db.exec('ALTER TABLE projects ADD COLUMN slug TEXT DEFAULT NULL'); } catch {}
 try { db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_slug ON projects(slug)'); } catch {}
 
+// Migration: add plan column to users (idempotent)
+try { db.exec("ALTER TABLE users ADD COLUMN plan TEXT DEFAULT 'free'"); } catch {}
+
+// Migration: add build tracking columns to deployments (idempotent)
+try { db.exec('ALTER TABLE deployments ADD COLUMN build_duration_ms INTEGER DEFAULT 0'); } catch {}
+try { db.exec('ALTER TABLE deployments ADD COLUMN output_size_bytes INTEGER DEFAULT 0'); } catch {}
+
+// ── Usage Events Table ──
+db.exec(`
+  CREATE TABLE IF NOT EXISTS usage_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+    deployment_id TEXT REFERENCES deployments(id) ON DELETE SET NULL,
+    event_type TEXT NOT NULL,
+    value REAL NOT NULL DEFAULT 0 CHECK(value >= 0),
+    unit TEXT NOT NULL DEFAULT '',
+    metadata TEXT DEFAULT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_usage_user_type_created
+    ON usage_events(user_id, event_type, created_at);
+`);
+
+// ── Backfill: populate usage_events from existing deployments (one-time) ──
+{
+  const count = db.prepare('SELECT COUNT(*) as c FROM usage_events').get().c;
+  if (count === 0) {
+    const backfill = db.transaction(() => {
+      // Backfill deployment events with cost metadata
+      const deployResult = db.prepare(`
+        INSERT INTO usage_events (user_id, project_id, deployment_id, event_type, value, unit, metadata, created_at)
+        SELECT p.user_id, d.project_id, d.id, 'deployment', 1, 'count',
+          json_object('sui_cost', COALESCE(d.sui_cost, 0), 'wal_cost', COALESCE(d.wal_cost, 0)),
+          d.completed_at
+        FROM deployments d JOIN projects p ON p.id = d.project_id
+        WHERE d.status = 'live' AND d.completed_at IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM usage_events WHERE deployment_id = d.id AND event_type = 'deployment')
+      `).run();
+
+      // Backfill build_minutes from timestamps
+      const minutesResult = db.prepare(`
+        INSERT INTO usage_events (user_id, project_id, deployment_id, event_type, value, unit, created_at)
+        SELECT p.user_id, d.project_id, d.id, 'build_minutes',
+          ROUND((julianday(d.completed_at) - julianday(d.started_at)) * 1440, 2),
+          'minutes', d.completed_at
+        FROM deployments d JOIN projects p ON p.id = d.project_id
+        WHERE d.status = 'live' AND d.started_at IS NOT NULL AND d.completed_at IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM usage_events WHERE deployment_id = d.id AND event_type = 'build_minutes')
+      `).run();
+
+      if (deployResult.changes > 0 || minutesResult.changes > 0) {
+        console.log(`Backfilled usage: ${deployResult.changes} deployment(s), ${minutesResult.changes} build_minutes`);
+      }
+    });
+
+    try { backfill(); } catch (err) {
+      console.warn('Usage backfill failed (non-fatal):', err.message);
+    }
+  }
+}
+
 module.exports = db;
 module.exports.dataDir = dataDir;
 module.exports.buildsDir = buildsDir;

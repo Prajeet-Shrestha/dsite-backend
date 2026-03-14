@@ -9,6 +9,7 @@ const builder = require('./services/builder');
 const deployer = require('./services/deployer');
 const github = require('./services/github');
 const siteCache = require('./services/siteCache');
+const usage = require('./services/usage');
 
 // ── Config ──
 const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT_BUILDS) || 2;
@@ -229,6 +230,7 @@ async function runPipeline(project, deploymentId, userToken, abortController) {
       .run('building', deploymentId);
     emitter.emit('status', 'building');
     emitLog('── Build started ──');
+    const buildStartTime = Date.now();
     if (commitSha) commitStatus(commitSha, 'pending', 'Building...');
 
     // Build timeout
@@ -271,13 +273,33 @@ async function runPipeline(project, deploymentId, userToken, abortController) {
     }
 
     // ── LIVE ──
+    const buildDurationMs = Date.now() - buildStartTime;
+    const outputSizeBytes = usage.dirSize(outputDir);
+
     db.prepare(`
-      UPDATE deployments SET status = 'live', walrus_url = ?, sui_cost = ?, wal_cost = ?, completed_at = datetime('now')
+      UPDATE deployments SET status = 'live', walrus_url = ?, sui_cost = ?, wal_cost = ?,
+        build_duration_ms = ?, output_size_bytes = ?, completed_at = datetime('now')
       WHERE id = ?
-    `).run(result.url, result.suiCost || 0, result.walCost || 0, deploymentId);
+    `).run(result.url, result.suiCost || 0, result.walCost || 0, buildDurationMs, outputSizeBytes, deploymentId);
 
     db.prepare('UPDATE projects SET walrus_object_id = ?, walrus_url = ?, updated_at = datetime(\'now\') WHERE id = ?')
       .run(result.objectId, result.url, project.id);
+
+    // Usage events (G21: best-effort, never crash pipeline)
+    try {
+      const userId = project.user_id;
+      usage.recordEvent(userId, 'deployment', 1, 'count', {
+        projectId: project.id,
+        deploymentId,
+        metadata: { sui_cost: result.suiCost || 0, wal_cost: result.walCost || 0 },
+      });
+      usage.recordEvent(userId, 'build_minutes', Math.round(buildDurationMs / 60000 * 100) / 100, 'minutes', {
+        projectId: project.id,
+        deploymentId,
+      });
+    } catch (usageErr) {
+      console.error('Usage recording failed (non-fatal):', usageErr.message);
+    }
 
     emitter.emit('status', 'live');
     emitLog(`✓ Live at ${result.url}`);
@@ -295,12 +317,23 @@ async function runPipeline(project, deploymentId, userToken, abortController) {
     } else {
       // ── FAILED ──
       const errorMsg = err.message || 'Unknown error';
-      db.prepare('UPDATE deployments SET status = ?, error_message = ?, sui_cost = ?, completed_at = datetime(\'now\') WHERE id = ?')
-        .run('failed', errorMsg, err.suiCost || 0, deploymentId);
+      const buildDurationMs = Date.now() - buildStartTime;
+      db.prepare('UPDATE deployments SET status = ?, error_message = ?, sui_cost = ?, build_duration_ms = ?, completed_at = datetime(\'now\') WHERE id = ?')
+        .run('failed', errorMsg, err.suiCost || 0, buildDurationMs, deploymentId);
       emitter.emit('status', 'failed');
       emitter.emit('build_error', errorMsg);
       emitLog(`✗ Failed: ${errorMsg}`);
       if (commitSha) commitStatus(commitSha, 'failure', errorMsg.slice(0, 140));
+
+      // Record build minutes for failed builds (E1: resources consumed)
+      try {
+        usage.recordEvent(project.user_id, 'build_minutes', Math.round(buildDurationMs / 60000 * 100) / 100, 'minutes', {
+          projectId: project.id,
+          deploymentId,
+        });
+      } catch (usageErr) {
+        console.error('Usage recording failed (non-fatal):', usageErr.message);
+      }
     }
   } finally {
     // ── CLEANUP ──

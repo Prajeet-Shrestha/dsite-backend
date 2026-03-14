@@ -89,6 +89,7 @@ router.get('/me', requireAuth, (req, res) => {
     username: req.user.username,
     avatar_url: req.user.avatarUrl,
     github_id: req.user.githubId,
+    plan: req.user.plan,
   });
 });
 

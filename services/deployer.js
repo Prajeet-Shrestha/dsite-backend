@@ -346,7 +346,7 @@ async function run(project, outputDir, emitLog) {
   const walCost = deployError ? 0 : Math.max(0, +(before.wal - after.wal).toFixed(9));
 
   if (suiCost > 0 || walCost > 0) {
-    emitLog(`💰 Cost: ${suiCost.toFixed(4)} SUI${walCost > 0 ? `, ${walCost.toFixed(2)} WAL` : ''}`);
+    emitLog(`💰 Cost: ${suiCost.toFixed(8)} SUI${walCost > 0 ? `, ${walCost.toFixed(8)} WAL` : ''}`);
   }
 
   // Re-throw with cost attached, or return success

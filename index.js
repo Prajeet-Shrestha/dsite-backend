@@ -13,6 +13,7 @@ const authRoutes = require('./routes/auth');
 const reposRoutes = require('./routes/repos');
 const projectsRoutes = require('./routes/projects');
 const deploymentsRoutes = require('./routes/deployments');
+const usageRoutes = require('./routes/usage');
 const queue = require('./queue');
 const deployer = require('./services/deployer');
 
@@ -40,12 +41,24 @@ if (SITE_DOMAIN && PORTAL_URL) {
   const siteCache = require('./services/siteCache');
   const { RESERVED } = require('./services/slugify');
 
+  const usage = require('./services/usage');
+
   const siteProxy = createProxyMiddleware({
     target: PORTAL_URL,
     changeOrigin: true,
     on: {
       proxyReq: (proxyReq, req) => {
         if (req._portalHost) proxyReq.setHeader('Host', req._portalHost);
+      },
+      proxyRes: (proxyRes, req) => {
+        // G11: count wire bytes for bandwidth tracking
+        if (req._siteUserId) {
+          let bytes = 0;
+          proxyRes.on('data', (chunk) => { bytes += chunk.length; });
+          proxyRes.on('end', () => {
+            if (bytes > 0) usage.accumulateBandwidth(req._siteUserId, bytes);
+          });
+        }
       },
       error: (_err, _req, res) => {
         if (!res.headersSent) {
@@ -80,20 +93,22 @@ if (SITE_DOMAIN && PORTAL_URL) {
     const cached = siteCache.get(subdomain);
     if (cached === 'NONE') return res.status(404).send('Site not found');
     if (cached) {
-      req._portalHost = `${cached}.localhost`;
+      req._portalHost = `${cached.b36}.localhost`;
+      req._siteUserId = cached.userId;
       return siteProxy(req, res, next);
     }
 
-    // DB lookup
-    const project = db.prepare('SELECT walrus_object_id FROM projects WHERE slug = ?').get(subdomain);
+    // DB lookup (G2: include user_id for bandwidth attribution)
+    const project = db.prepare('SELECT walrus_object_id, user_id FROM projects WHERE slug = ?').get(subdomain);
     if (!project || !project.walrus_object_id) {
       siteCache.set(subdomain, 'NONE');
       return res.status(404).send(project ? 'Site not deployed yet' : 'Site not found');
     }
 
     const b36 = BigInt(project.walrus_object_id).toString(36);
-    siteCache.set(subdomain, b36);
+    siteCache.set(subdomain, { b36, userId: project.user_id });
     req._portalHost = `${b36}.localhost`;
+    req._siteUserId = project.user_id;
     siteProxy(req, res, next);
   });
 
@@ -134,6 +149,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api', reposRoutes);
 app.use('/api/projects', projectsRoutes);
 app.use('/api', deploymentsRoutes);
+app.use('/api', usageRoutes);
 
 // ── Health check ──
 app.get('/api/health', (_req, res) => {
@@ -182,12 +198,13 @@ async function start() {
 // ── Graceful Shutdown (W2) ──
 process.on('SIGTERM', () => {
   console.log('SIGTERM received — shutting down...');
-  // Grace period to close SSE connections
+  try { require('./services/usage').flushBandwidth(); } catch (_) {}
   setTimeout(() => process.exit(0), 2000);
 });
 
 process.on('SIGINT', () => {
   console.log('SIGINT received — shutting down...');
+  try { require('./services/usage').flushBandwidth(); } catch (_) {}
   setTimeout(() => process.exit(0), 2000);
 });
 

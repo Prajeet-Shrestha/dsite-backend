@@ -26,6 +26,7 @@ function requireAuth(req, res, next) {
       githubId: row.github_id,
       username: row.username,
       avatarUrl: row.avatar_url,
+      plan: row.plan || 'free',
       token: decrypt(row.access_token),
     };
     next();
