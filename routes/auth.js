@@ -20,36 +20,32 @@ function cleanExpiredCodes() {
 
 /**
  * GET /api/auth/github — Initiate OAuth
+ * Uses HMAC-signed timestamp as state (stateless — no session needed).
  */
-router.get('/github', (req, res) => {
-  console.log('[Auth] OAuth initiation - generating state...');
-  const state = crypto.randomBytes(32).toString('hex');
-  req.session.oauthState = state;
-  req.session.save((err) => {
-    if (err) {
-      console.error('[Auth] Session save error:', err);
-      return res.status(500).json({ error: 'Session error' });
-    }
-    const params = new URLSearchParams({
-      client_id: process.env.GITHUB_CLIENT_ID,
-      scope: 'repo admin:repo_hook read:user',
-      state,
-    });
-    const url = `https://github.com/login/oauth/authorize?${params}`;
-    console.log(`[Auth] Redirecting to GitHub OAuth (client_id=${process.env.GITHUB_CLIENT_ID})`);
-    res.redirect(url);
+router.get('/github', (_req, res) => {
+  console.log('[Auth] OAuth initiation...');
+  // Stateless CSRF: HMAC(timestamp) — verifiable without session
+  const ts = Date.now().toString();
+  const sig = crypto.createHmac('sha256', process.env.SESSION_SECRET).update(ts).digest('hex');
+  const state = `${ts}.${sig}`;
+
+  const params = new URLSearchParams({
+    client_id: process.env.GITHUB_CLIENT_ID,
+    scope: 'repo admin:repo_hook read:user',
+    state,
   });
+  const url = `https://github.com/login/oauth/authorize?${params}`;
+  console.log(`[Auth] Redirecting to GitHub OAuth (client_id=${process.env.GITHUB_CLIENT_ID})`);
+  res.redirect(url);
 });
 
 /**
  * GET /api/auth/github/callback — Handle OAuth callback
- * After successful login, generates a one-time auth code and
- * redirects to the frontend's /auth/callback?code=xxx route.
- * The frontend then exchanges the code for a session via POST /api/auth/exchange.
+ * Verifies stateless HMAC state, exchanges code, generates one-time auth code.
  */
 router.get('/github/callback', async (req, res, next) => {
   try {
-    console.log(`[Auth] Callback received - query: error=${req.query.error || 'none'}, code=${req.query.code ? 'present' : 'missing'}, state=${req.query.state ? 'present' : 'missing'}`);
+    console.log(`[Auth] Callback received - error=${req.query.error || 'none'}, code=${req.query.code ? 'present' : 'missing'}, state=${req.query.state ? 'present' : 'missing'}`);
 
     // Handle denial
     if (req.query.error) {
@@ -57,12 +53,17 @@ router.get('/github/callback', async (req, res, next) => {
       return res.redirect(`${process.env.CLIENT_URL}/login?error=denied`);
     }
 
-    // Verify CSRF state
-    if (!req.query.state || req.query.state !== req.session.oauthState) {
-      console.error(`[Auth] State mismatch! query=${req.query.state}, session=${req.session.oauthState}`);
+    // Verify stateless HMAC state (valid for 10 minutes)
+    const [ts, sig] = (req.query.state || '').split('.');
+    const expectedSig = crypto.createHmac('sha256', process.env.SESSION_SECRET).update(ts || '').digest('hex');
+    if (!ts || !sig || sig !== expectedSig) {
+      console.error('[Auth] State signature mismatch');
       return res.status(403).json({ error: 'State mismatch — possible CSRF' });
     }
-    delete req.session.oauthState;
+    if (Date.now() - parseInt(ts) > 10 * 60 * 1000) {
+      console.error('[Auth] State expired');
+      return res.status(403).json({ error: 'OAuth state expired — please try again' });
+    }
 
     // Exchange code for token
     console.log('[Auth] Exchanging code for token...');
