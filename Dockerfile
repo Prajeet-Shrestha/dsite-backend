@@ -14,7 +14,7 @@ RUN curl -fsSL https://github.com/MystenLabs/sui/releases/download/mainnet-v1.67
 
 # ── Install site-builder ──
 # Downloaded from Walrus GCS bucket (official distribution)
-RUN curl -fsSL "https://storage.googleapis.com/mysten-walrus-binaries/site-builder-mainnet-v2.7.0-ubuntu-x86_64" \
+RUN curl -fsSL "https://storage.googleapis.com/mysten-walrus-binaries/site-builder-mainnet-latest-ubuntu-x86_64" \
     -o /usr/local/bin/site-builder \
     && chmod +x /usr/local/bin/site-builder
 
