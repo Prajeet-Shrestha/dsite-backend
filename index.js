@@ -72,6 +72,9 @@ if (SITE_DOMAIN && PORTAL_URL) {
   app.use((req, res, next) => {
     const host = req.hostname;
 
+    // Guard: skip if hostname is missing (malformed requests from bots/scanners)
+    if (!host) return next();
+
     // Only handle *.SITE_DOMAIN subdomains, not root domain or other hosts
     if (host === SITE_DOMAIN || !host.endsWith(`.${SITE_DOMAIN}`)) return next();
     // Let API paths through to Express routes
