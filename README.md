@@ -50,3 +50,15 @@ Sites accessible at: `http://<project-name>.207.180.212.180.nip.io:3000`
 ## ⚠️ Important
 
 The `site-builder` download URL (`storage.googleapis.com/mysten-walrus-binaries/...`) may need verification — if the Docker build fails on that step, check the [Walrus docs](https://docs.walrus.site) for the current Linux binary URL.
+
+
+## Why the Self-Hosted Portal is Required
+
+Walrus mainnet has **no public portal with wildcard subdomain support**. The site-builder CLI confirms this — after deploying, it only offers two options:
+
+1. **Run a portal locally** (e.g. `http://<base36-id>.localhost:3000`)
+2. **Use `wal.app`** — but this requires a **SuiNS name** for each site (purchased at suins.io)
+
+Since dSite is a SaaS where users deploy sites without buying SuiNS names, we **must** run our own portal. This is the `portal` service in `docker-compose.yaml` (image: `mysten/walrus-sites-server-portal`), which the backend proxies via `SITE_DOMAIN` + `PORTAL_URL` env vars.
+
+The proxy in `index.js` maps `<slug>.emeraldcity.xyz` → looks up the Walrus object ID → forwards to the portal → serves the site. All site traffic flows through our server, which means bandwidth is a real cost (unlike the "unlimited bandwidth" claim that would apply if a public portal existed).
