@@ -28,17 +28,17 @@ In `docker-compose.yml`:
 
 Sites accessible at: `http://<project-name>.207.180.212.180.nip.io:3000`
 
-### Production (swap to emeraldcity.xyz)
+### Production (swap to beatdown.co)
 
 1. Update `docker-compose.yml`:
 ```yaml
-- SITE_DOMAIN=emeraldcity.xyz
-- CLIENT_URL=https://emeraldcity.xyz
+- SITE_DOMAIN=beatdown.co
+- CLIENT_URL=https://beatdown.co
 ```
 
-2. In Coolify, set domain to `emeraldcity.xyz` and `*.emeraldcity.xyz`
+2. In Coolify, set domain to `beatdown.co` and `*.beatdown.co`
 
-3. In Cloudflare DNS for `emeraldcity.xyz`:
+3. In Cloudflare DNS for `beatdown.co`:
 
 | Type | Name | Content           | Proxy     |
 |------|------|--------------------|-----------|
@@ -61,4 +61,4 @@ Walrus mainnet has **no public portal with wildcard subdomain support**. The sit
 
 Since dSite is a SaaS where users deploy sites without buying SuiNS names, we **must** run our own portal. This is the `portal` service in `docker-compose.yaml` (image: `mysten/walrus-sites-server-portal`), which the backend proxies via `SITE_DOMAIN` + `PORTAL_URL` env vars.
 
-The proxy in `index.js` maps `<slug>.emeraldcity.xyz` → looks up the Walrus object ID → forwards to the portal → serves the site. All site traffic flows through our server, which means bandwidth is a real cost (unlike the "unlimited bandwidth" claim that would apply if a public portal existed).
+The proxy in `index.js` maps `<slug>.beatdown.co` → looks up the Walrus object ID → forwards to the portal → serves the site. All site traffic flows through our server, which means bandwidth is a real cost (unlike the "unlimited bandwidth" claim that would apply if a public portal existed).

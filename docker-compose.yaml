@@ -6,18 +6,18 @@ services:
     labels:
       # Wildcard subdomain routing for deployed sites (Traefik v3 syntax)
       - "traefik.enable=true"
-      - "traefik.http.routers.dsite-wildcard-https.rule=HostRegexp(`^.+\\.emeraldcity\\.xyz$$`)"
+      - "traefik.http.routers.dsite-wildcard-https.rule=HostRegexp(`^.+\\.beatdown\\.co$$`)"
       - "traefik.http.routers.dsite-wildcard-https.entrypoints=https"
       - "traefik.http.routers.dsite-wildcard-https.tls=true"
       - "traefik.http.routers.dsite-wildcard-https.service=dsite-backend"
-      - "traefik.http.routers.dsite-wildcard-http.rule=HostRegexp(`^.+\\.emeraldcity\\.xyz$$`)"
+      - "traefik.http.routers.dsite-wildcard-http.rule=HostRegexp(`^.+\\.beatdown\\.co$$`)"
       - "traefik.http.routers.dsite-wildcard-http.entrypoints=http"
       - "traefik.http.routers.dsite-wildcard-http.service=dsite-backend"
       - "traefik.http.services.dsite-backend.loadbalancer.server.port=3000"
     environment:
       - NODE_ENV=production
       - PORTAL_URL=http://portal:3000
-      - SITE_DOMAIN=emeraldcity.xyz
+      - SITE_DOMAIN=beatdown.co
       - CLIENT_URL=https://dsite-client.vercel.app
       - WALRUS_CONTEXT=mainnet
       - WALRUS_EPOCHS=1
