@@ -213,10 +213,14 @@ async function run(project, buildDir, token, emitLog, signal) {
     const binPath = path.join(workDir, 'node_modules', '.bin');
     const envPath = `${binPath}:${process.env.PATH}`;
 
+    // Strip NODE_ENV=production so devDependencies (vite, tsc, etc.) are installed
+    const installEnv = { ...process.env, PATH: envPath };
+    delete installEnv.NODE_ENV;
+
     try {
       await runCommand(cmd, args, {
         cwd: workDir,
-        env: { ...process.env, PATH: envPath },
+        env: installEnv,
       }, emitLog, signal);
     } catch (err) {
       throw new Error(`Dependency install failed: ${sanitize(err.message)}`);
@@ -230,8 +234,9 @@ async function run(project, buildDir, token, emitLog, signal) {
   if (buildCommand) {
     emitLog(`Running build: ${buildCommand}`);
 
-    // Inject project env vars
+    // Inject project env vars (strip NODE_ENV so build tools like vite work)
     let buildEnv = { ...process.env };
+    delete buildEnv.NODE_ENV;
     if (project.env_vars) {
       try {
         const { decrypt } = require('../crypto');
