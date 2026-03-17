@@ -8,6 +8,10 @@ RUN apt-get update && apt-get install -y \
 # Enable corepack for pnpm/yarn support (user repos may use any package manager)
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
+# Install common build tools globally so user repos don't fail on missing CLIs
+# (tsc, sass, tailwindcss, webpack, etc.)
+RUN npm install -g typescript sass tailwindcss webpack webpack-cli vite
+
 # ── Install Sui CLI ──
 RUN curl -fsSL https://github.com/MystenLabs/sui/releases/download/mainnet-v1.67.3/sui-mainnet-v1.67.3-ubuntu-x86_64.tgz \
     -o /tmp/sui.tgz \
